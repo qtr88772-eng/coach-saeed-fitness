@@ -5,6 +5,10 @@ import io
 import zipfile
 from datetime import datetime
 
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
 # ---------------------------------
 # Page config
 # ---------------------------------
@@ -161,6 +165,102 @@ def zip_project_cached(base_dir_str: str) -> bytes:
                     continue
                 z.write(f, f.relative_to(base_dir).as_posix())
     return bio.getvalue()
+
+
+# ---------------------------------
+# PDF Export (Generated inside Streamlit)
+# ---------------------------------
+@st.cache_data(show_spinner=True)
+def build_pdf_bytes(base_dir_str: str) -> bytes:
+    """
+    Builds a PDF from the deployed repo images folder.
+    Works on Streamlit Cloud because it reads files from the deployed repo.
+    """
+    base_dir = Path(base_dir_str)
+    images_dir = base_dir / "images"
+
+    styles = getSampleStyleSheet()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36
+    )
+
+    story = []
+    story.append(Paragraph("Coach Saeed Fitness", styles["Title"]))
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Exported from Streamlit (Images Catalog)", styles["Normal"]))
+    story.append(PageBreak())
+
+    if not images_dir.exists():
+        story.append(Paragraph("No images folder found: /images", styles["Heading2"]))
+        doc.build(story)
+        return buf.getvalue()
+
+    # Preferred order
+    ordered_sections = ["bench", "back", "shoulders", "biceps", "triceps", "coach", "covers"]
+
+    def img_files_in(dirpath: Path):
+        exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+        return sorted(
+            [p for p in dirpath.iterdir() if p.is_file() and p.suffix.lower() in exts],
+            key=lambda x: x.name.lower()
+        )
+
+    def exercise_dirs_in(dirpath: Path):
+        return sorted([d for d in dirpath.iterdir() if d.is_dir()], key=lambda x: x.name.lower())
+
+    for sec in ordered_sections:
+        sec_dir = images_dir / sec
+        if not sec_dir.exists():
+            continue
+
+        story.append(Paragraph(f"Section: {sec}", styles["Heading1"]))
+        story.append(Spacer(1, 8))
+
+        ex_dirs = exercise_dirs_in(sec_dir)
+
+        # Sections that have exercise folders (bench/back/shoulders/biceps/triceps)
+        if ex_dirs:
+            for ex_dir in ex_dirs:
+                story.append(Paragraph(f"Exercise: {ex_dir.name}", styles["Heading2"]))
+                story.append(Spacer(1, 6))
+
+                imgs = img_files_in(ex_dir)
+                if not imgs:
+                    story.append(Paragraph("No images in this exercise folder.", styles["Normal"]))
+                    story.append(Spacer(1, 10))
+                    continue
+
+                for im in imgs:
+                    try:
+                        story.append(RLImage(str(im), width=260, height=260))
+                        story.append(Spacer(1, 8))
+                    except Exception:
+                        story.append(Paragraph(f"Skipped unreadable image: {im.name}", styles["Normal"]))
+                        story.append(Spacer(1, 6))
+
+                story.append(Spacer(1, 12))
+
+        # Sections with images directly inside (coach/covers sometimes)
+        else:
+            imgs = img_files_in(sec_dir)
+            if imgs:
+                for im in imgs:
+                    try:
+                        story.append(RLImage(str(im), width=300, height=300))
+                        story.append(Spacer(1, 10))
+                    except Exception:
+                        story.append(Paragraph(f"Skipped unreadable image: {im.name}", styles["Normal"]))
+                        story.append(Spacer(1, 6))
+            else:
+                story.append(Paragraph("No images found in this section.", styles["Normal"]))
+
+        story.append(PageBreak())
+
+    doc.build(story)
+    return buf.getvalue()
 
 def get_per_image_info(info: dict, filename: str, idx: int) -> dict:
     per_map = info.get("per_image", {})
@@ -420,6 +520,14 @@ st.sidebar.download_button(
     mime="application/zip"
 )
 
+
+pdf_bytes = build_pdf_bytes(str(BASE_DIR))
+st.sidebar.download_button(
+    label="⬇️ تحميل البرنامج PDF",
+    data=pdf_bytes,
+    file_name=f"Coach_Saeed_Fitness_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+    mime="application/pdf"
+)
 st.sidebar.markdown(
     f"<div class='mini'>تشغيل محلي: <code>streamlit run {RUN_FILE_NAME}</code></div>",
     unsafe_allow_html=True
